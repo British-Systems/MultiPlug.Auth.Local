@@ -48,13 +48,13 @@ namespace MultiPlug.Auth.Local
             }
         }
 
-        public AuthResult Authenticate( AuthCredentials theCredentials)
+        public IAuthResult Authenticate( IAuthCredentials theCredentials)
         {
             AuthLocalFile AuthFileRoot = null;
 
             if ( ! File.Exists( m_AuthFile ) )
             {
-                return new AuthResult( false, "System Error: Lookup file does not exist" );
+                return new AuthResult { Result = false, Message = "System Error: Lookup file does not exist" };
             }
 
             try
@@ -67,38 +67,38 @@ namespace MultiPlug.Auth.Local
             }
             catch ( InvalidOperationException ex )
             {
-                return new AuthResult( false, "System Error: " + ex.Message );
+                return new AuthResult { Result = false, Message = "System Error: " + ex.Message };
             }
             catch ( FileNotFoundException ex )
             {
-                return new AuthResult( false, "System Error: " + ex.Message );
+                return new AuthResult { Result = false, Message = "System Error: " + ex.Message };
             }
             catch ( Exception ex )
             {
-                return new AuthResult( false, "System Error: " + ex.Message );
+                return new AuthResult { Result = false, Message = "System Error: " + ex.Message };
             }
 
             var UserSearch = AuthFileRoot.Users.FirstOrDefault( u => u.Username.Equals( theCredentials.Username, StringComparison.OrdinalIgnoreCase ) );
 
             if( UserSearch == null )
             {
-                return new AuthResult( false, "Username or Password is incorrect" );
+                return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
             }
             else
             {
                 if( ! UserSearch.Enabled )
                 {
-                    return new AuthResult( false, "User is disabled" );
+                    return new AuthResult { Result = false, Message = "User is disabled" };
                 }
                 else
                 {
                     if ( UserSearch.Password != theCredentials.Password )
                     {
-                        return new AuthResult( false, "Username or Password is incorrect" );
+                        return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
                     }
                     else
                     {
-                        return new AuthResult( true, "OK" );
+                        return new AuthResult { Result = true, Message = "OK" };
                     }
                 }
             }
