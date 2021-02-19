@@ -7,17 +7,29 @@ namespace MultiPlug.Auth.Local.Models
     [XmlRoot(ElementName = "MultiPlug.Auth.Local")]
     public class AuthLocalFile
     {
-        [XmlArrayItem("User")]
+        [XmlArray("users")]
+        [XmlArrayItem("add")]
         public User[] Users { get; set; }
     }
 
     public class User
     {
-        [XmlAttribute]
-        public bool Enabled { get; set; }
-        [XmlAttribute]
+        [XmlAttribute("username")]
         public string Username { get; set; }
-        [XmlAttribute]
+        [XmlAttribute("password")]
         public string Password { get; set; }
+        [XmlAttribute("enabled")]
+        public bool Enabled { get; set; }
+        [XmlArray("tokens")]
+        [XmlArrayItem("add")]
+        public Token[] Tokens { get; set; }
+    }
+
+    public class Token
+    {
+        [XmlAttribute("token")]
+        public string Value { get; set; }
+        [XmlAttribute("expiry")]
+        public string Expiry { get; set; }
     }
 }
