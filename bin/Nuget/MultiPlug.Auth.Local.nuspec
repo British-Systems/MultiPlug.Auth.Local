@@ -2,7 +2,7 @@
 <package >
   <metadata>
     <id>MultiPlug.Auth.Local</id>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
     <title>MultiPlug Authentication using a local file</title>
     <authors>British Systems</authors>
     <owners>British Systems</owners>
@@ -10,7 +10,8 @@
     <icon>images\multiplugico.png</icon>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>File based local authentication for the MultiPlug .Net Edge Computing Platform</description>
-    <releaseNotes>1.0.2 upgrade for MultiPlug.Base 1.0.53
+    <releaseNotes>1.0.3 Github issue #1
+1.0.2 upgrade for MultiPlug.Base 1.0.53
 1.0.1 upgrade for MultiPlug.Base 1.0.52
 1.0.0 Published</releaseNotes>
     <copyright>Great British Systems Ltd 2021</copyright>

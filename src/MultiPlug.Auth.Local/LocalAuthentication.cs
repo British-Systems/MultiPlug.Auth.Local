@@ -31,15 +31,26 @@ namespace MultiPlug.Auth.Local
                     }
                 };
 
+                WriteFile(NewFile);
+            }
+            else
+            {
                 try
                 {
-                    XmlSerializer Serializer = new XmlSerializer( typeof( AuthLocalFile ) );
-                    using ( Stream stream = new FileStream( m_AuthFile, FileMode.Create, FileAccess.Write, FileShare.None ) )
+                    AuthLocalFile AuthFileRoot = ReadFile();
+
+                    if(AuthFileRoot != null)
                     {
-                        Serializer.Serialize(stream, NewFile);
+                        // Upgrade Legacy Files.
+                        if( AuthFileRoot.isLegacy )
+                        {
+                            WriteFile(AuthFileRoot);
+                        }
                     }
                 }
-                catch { }
+                catch (Exception)
+                {
+                }
             }
         }
         public IReadOnlyCollection<string> Domains
@@ -126,6 +137,51 @@ namespace MultiPlug.Auth.Local
             }
         }
 
+
+        private AuthLocalFile ReadFile()
+        {
+            XmlSerializer Serializer = new XmlSerializer(typeof(AuthLocalFile));
+            using (Stream stream = new FileStream(m_AuthFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                return (AuthLocalFile)Serializer.Deserialize(stream);
+            }
+        }
+
+        private void  WriteFile(AuthLocalFile theFileObject)
+        {
+            XmlAttributeOverrides overrides = new XmlAttributeOverrides();
+
+            XmlAttributes attribs = new XmlAttributes();
+            attribs.XmlIgnore = true;
+            attribs.XmlElements.Add(new XmlElementAttribute("UsersLegacy"));
+            overrides.Add(typeof(AuthLocalFile), "UsersLegacy", attribs);
+
+            attribs = new XmlAttributes();
+            attribs.XmlIgnore = true;
+            attribs.XmlElements.Add(new XmlElementAttribute("UsernameLegacy"));
+            overrides.Add(typeof(User), "UsernameLegacy", attribs);
+
+            attribs = new XmlAttributes();
+            attribs.XmlIgnore = true;
+            attribs.XmlElements.Add(new XmlElementAttribute("PasswordLegacy"));
+            overrides.Add(typeof(User), "PasswordLegacy", attribs);
+
+            attribs = new XmlAttributes();
+            attribs.XmlIgnore = true;
+            attribs.XmlElements.Add(new XmlElementAttribute("EnabledLegacy"));
+            overrides.Add(typeof(User), "EnabledLegacy", attribs);
+
+            try
+            {
+                XmlSerializer Serializer = new XmlSerializer(typeof(AuthLocalFile), overrides);
+                using (Stream stream = new FileStream(m_AuthFile, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    Serializer.Serialize(stream, theFileObject);
+                }
+            }
+            catch { }
+        }
+
         public IAuthResult Authenticate( IAuthCredentials theCredentials)
         {
             AuthLocalFile AuthFileRoot = null;
@@ -137,11 +193,7 @@ namespace MultiPlug.Auth.Local
 
             try
             {
-                XmlSerializer Serializer = new XmlSerializer( typeof( AuthLocalFile ) );
-                using (Stream stream = new FileStream( m_AuthFile, FileMode.Open, FileAccess.Read, FileShare.Read ) )
-                {
-                    AuthFileRoot = (AuthLocalFile)Serializer.Deserialize( stream );
-                }
+                AuthFileRoot = ReadFile();
             }
             catch ( InvalidOperationException ex )
             {
@@ -158,6 +210,11 @@ namespace MultiPlug.Auth.Local
 
             if( theCredentials.Scheme == Scheme.Form)
             {
+                if(AuthFileRoot.Users == null)
+                {
+                    return new AuthResult { Result = false, Message = "System Error: Lookup file contains no users" };
+                }
+
                 var UserSearch = AuthFileRoot.Users.FirstOrDefault(u => u.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase));
 
                 if (UserSearch == null)
