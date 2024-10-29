@@ -1,0 +1,37 @@
+﻿<?xml version="1.0"?>
+<package >
+  <metadata>
+    <id>MultiPlug.Auth.Local</id>
+    <version>1.0.4</version>
+    <title>MultiPlug Authentication using a local file</title>
+    <authors>British Systems</authors>
+    <owners>British Systems</owners>
+    <projectUrl>https://github.com/british-systems/MultiPlug.Auth.Local</projectUrl>
+    <icon>images\multiplugico.png</icon>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>File based local authentication for the MultiPlug .Net Edge Computing Platform</description>
+    <license type="file">docs\LICENSE.txt</license>
+    <repository type="git" url="https://github.com/British-Systems/MultiPlug.Auth.Local" />
+    <readme>docs\README.md</readme>
+    <releaseNotes>
+1.0.4 https://github.com/British-Systems/MultiPlug.Auth.Local/issues/2
+1.0.3 Github issue #1
+1.0.2 upgrade for MultiPlug.Base 1.0.53
+1.0.1 upgrade for MultiPlug.Base 1.0.52
+1.0.0 Published</releaseNotes>
+    <copyright>Great British Systems Ltd 2024</copyright>
+    <tags>MultiPlug Edge_Computing IOT IIOT</tags>
+    <dependencies>
+      <group targetFramework=".NETFramework4.7.2">
+        <dependency id="MultiPlug.Base" version="1.0.72" />
+        <dependency id="MultiPlug.Core" version="2.2.81" />
+      </group>
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="images\multiplugico.png" target="images\" />
+    <file src="licenses\LICENSE.txt" target="docs\" />
+    <file src="Readme\README.md" target="docs\" />
+    <file src="..\..\src\MultiPlug.Auth.Local\bin\Release\MultiPlug.Auth.Local.dll" target="lib\net472" />
+  </files>
+</package>

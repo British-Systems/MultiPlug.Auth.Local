@@ -53,6 +53,78 @@ namespace MultiPlug.Auth.Local
                 }
             }
         }
+
+        public IAuthResult Add(IAuthCredentials theCredentials)
+        {
+            AuthLocalFile File = ReadFile();
+
+            var UserSearch = File.Users.FirstOrDefault(User => User.Username != null ? User.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase) : false);
+
+            if (UserSearch == null)
+            {
+                var Users = File.Users.ToList();
+                Users.Add(new User { Enabled = true, Username = theCredentials.Username, Password = Utils.Passwords.GenerateSaltedPassword(theCredentials.Password), Tokens = new Token[0] });
+                File.Users = Users.ToArray();
+                WriteFile(File);
+                return new AuthResult { Result = true, Identity = theCredentials.Username };
+            }
+            else
+            {
+                return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "User duplicate" };
+            }
+        }
+
+        public IAuthResult Edit(IAuthCredentials theCredentials, IAuthCredentials theNewCredentials)
+        {
+            AuthLocalFile File = ReadFile();
+
+            var UserSearch = File.Users.FirstOrDefault(User => User.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase));
+
+            if(UserSearch != null)
+            {
+                if( Utils.Passwords.AuthenticatePassword( theCredentials.Password, UserSearch.Password ) )
+                {
+                    UserSearch.Password = Utils.Passwords.GenerateSaltedPassword(theNewCredentials.Password);
+                    WriteFile(File);
+                    return new AuthResult { Result = true, Identity = theCredentials.Username };
+                }
+                else
+                {
+                    return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "Incorrect old Password" };
+                }
+            }
+            else
+            {
+                return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "User not found" };
+            }
+        }
+
+        public IAuthResult Delete(IAuthCredentials theCredentials)
+        {
+            AuthLocalFile File = ReadFile();
+
+            var UserSearch = File.Users.FirstOrDefault(User => User.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase));
+
+            if (UserSearch != null)
+            {
+                var Users = File.Users.ToList();
+                Users.Remove(UserSearch);
+                File.Users = Users.ToArray();
+                WriteFile(File);
+                return new AuthResult { Result = true, Identity = theCredentials.Username };
+            }
+            else
+            {
+                return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "User not found" };
+            }
+        }
+
+        public IReadOnlyCollection<string> Users()
+        {
+            AuthLocalFile File = ReadFile();
+            return Array.AsReadOnly(File.Users.Select(User => c_Domains[0] + "\\" + User.Username).ToArray());
+        }
+
         public IReadOnlyCollection<string> Domains
         {
             get
@@ -125,13 +197,13 @@ namespace MultiPlug.Auth.Local
                 }
                 else
                 {
-                    if (UserSearch.Password != Password)
+                    if( Utils.Passwords.AuthenticatePassword( Password, UserSearch.Password ) )
                     {
-                        return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
+                        return new AuthResult { Result = true, Identity = c_Domains[0] + "\\" + UserSearch.Username, Message = "OK" };
                     }
                     else
                     {
-                        return new AuthResult { Result = true, Identity = c_Domains[0] + "\\" + UserSearch.Username, Message = "OK" };
+                        return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
                     }
                 }
             }
@@ -229,13 +301,13 @@ namespace MultiPlug.Auth.Local
                     }
                     else
                     {
-                        if (UserSearch.Password != theCredentials.Password)
+                        if( Utils.Passwords.AuthenticatePassword( theCredentials.Password, UserSearch.Password ) )
                         {
-                            return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
+                            return new AuthResult { Result = true, Identity = c_Domains[0] + "\\" + UserSearch.Username, Message = "OK" };
                         }
                         else
                         {
-                            return new AuthResult { Result = true, Identity = c_Domains[0] + "\\" + UserSearch.Username, Message = "OK" };
+                            return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
                         }
                     }
                 }
@@ -308,5 +380,7 @@ namespace MultiPlug.Auth.Local
                 return new AuthResult { Result = false, Message = "Not a supported Scheme" };
             }
         }
+
+
     }
 }
