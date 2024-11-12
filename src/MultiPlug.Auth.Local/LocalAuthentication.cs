@@ -1,12 +1,11 @@
 ﻿using System;
-using System.IO;
+using System.Text;
 using System.Linq;
-using System.Xml.Serialization;
 using System.Collections.Generic;
-
 using MultiPlug.Base.Security;
 using MultiPlug.Auth.Local.Models;
-using System.Text;
+using MultiPlug.Auth.Local.Models.File;
+using MultiPlug.Auth.Local.File;
 
 namespace MultiPlug.Auth.Local
 {
@@ -21,31 +20,16 @@ namespace MultiPlug.Auth.Local
 
         public LocalAuthentication()
         {
-            if ( ! File.Exists( m_AuthFile ) )
-            {
-                AuthLocalFile NewFile = new AuthLocalFile
-                {
-                    Users = new User[]
-                    {
-                        new User { Enabled = false, Username = "admin", Password = "password", Tokens = new Token[] { new Token { Value = "ABCDE", Expiry = string.Empty } } }
-                    }
-                };
-
-                WriteFile(NewFile);
-            }
-            else
+            if ( FileManager.Exists() )
             {
                 try
                 {
-                    AuthLocalFile AuthFileRoot = ReadFile();
+                    FileBody AuthFileRoot = FileManager.Read();
 
-                    if(AuthFileRoot != null)
+                    // Upgrade Legacy Files.
+                    if( AuthFileRoot.isLegacy )
                     {
-                        // Upgrade Legacy Files.
-                        if( AuthFileRoot.isLegacy )
-                        {
-                            WriteFile(AuthFileRoot);
-                        }
+                        FileManager.Write(AuthFileRoot);
                     }
                 }
                 catch (Exception)
@@ -56,73 +40,144 @@ namespace MultiPlug.Auth.Local
 
         public IAuthResult Add(IAuthCredentials theCredentials)
         {
-            AuthLocalFile File = ReadFile();
+            FileBody File = FileManager.Read();
 
             var UserSearch = File.Users.FirstOrDefault(User => User.Username != null ? User.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase) : false);
 
             if (UserSearch == null)
             {
-                var Users = File.Users.ToList();
-                Users.Add(new User { Enabled = true, Username = theCredentials.Username, Password = Utils.Passwords.GenerateSaltedPassword(theCredentials.Password), Tokens = new Token[0] });
-                File.Users = Users.ToArray();
-                WriteFile(File);
-                return new AuthResult { Result = true, Identity = theCredentials.Username };
+                FileToken[] Tokens = new FileToken[0];
+
+                var AuthHeader = GetAuthHeader(theCredentials.HttpRequestHeaders);
+                var AuthFriendlyName = GetAuthFriendlyNameHeader(theCredentials.HttpRequestHeaders);
+
+                if (AuthHeader != null && AuthFriendlyName != null && AuthHeader.Length == AuthFriendlyName.Length)
+                {
+                    Tokens = new FileToken[AuthHeader.Length];
+
+                    for (int i = 0; i < AuthHeader.Length; i++)
+                    {
+                        Tokens[i] = new FileToken { Value = AuthHeader[i], Expiry = string.Empty, FriendlyName = AuthFriendlyName[i] };
+                    }
+                }
+
+                var NewUser = new FileUser { Enabled = true, Username = theCredentials.Username, Password = Utils.Passwords.GenerateSaltedPassword(theCredentials.Username + theCredentials.Password), Tokens = Tokens };
+
+                FileManager.AddUser(File, NewUser);
+                FileManager.Write(File);
+                return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(NewUser), NewUser.Enabled, ConstructTokenFriendlyNameList(NewUser)) };
             }
             else
             {
-                return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "User duplicate" };
+                return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch)), Message = "Duplicate User" };
             }
         }
 
         public IAuthResult Edit(IAuthCredentials theCredentials, IAuthCredentials theNewCredentials)
         {
-            AuthLocalFile File = ReadFile();
+            FileBody File = FileManager.Read();
 
             var UserSearch = File.Users.FirstOrDefault(User => User.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase));
 
             if(UserSearch != null)
             {
-                if( Utils.Passwords.AuthenticatePassword( theCredentials.Password, UserSearch.Password ) )
+                // Change of Username or Password require Current Password to be Okay
+                if ((!string.IsNullOrEmpty(theNewCredentials.Username)) || (!string.IsNullOrEmpty(theNewCredentials.Password)))
                 {
-                    UserSearch.Password = Utils.Passwords.GenerateSaltedPassword(theNewCredentials.Password);
-                    WriteFile(File);
-                    return new AuthResult { Result = true, Identity = theCredentials.Username };
+                    if (Utils.Passwords.AuthenticatePassword(theCredentials.Username + theCredentials.Password, UserSearch.Password))
+                    {
+                        if (!string.IsNullOrEmpty(theNewCredentials.Username)) // Change of Username
+                        {
+                            var DuplicateUserSearch = File.Users.FirstOrDefault(User => User.Username.Equals(theNewCredentials.Username, StringComparison.OrdinalIgnoreCase));
+
+                            if (DuplicateUserSearch != null)
+                            {
+                                return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(DuplicateUserSearch), DuplicateUserSearch.Enabled, ConstructTokenFriendlyNameList(DuplicateUserSearch)), Message = "Duplicate User" };
+                            }
+
+                            UserSearch.Username = theNewCredentials.Username;
+                            // We have to update the Salted password as it's based on the Username
+                            UserSearch.Password = Utils.Passwords.GenerateSaltedPassword(theNewCredentials.Username + (string.IsNullOrEmpty(theNewCredentials.Password) ? theCredentials.Password : theNewCredentials.Password));
+                        }
+                        else if (!string.IsNullOrEmpty(theNewCredentials.Password)) // Change of Password
+                        {
+                            UserSearch.Password = Utils.Passwords.GenerateSaltedPassword(theCredentials.Username + theNewCredentials.Password);
+                        }
+
+                        FileManager.Write(File);
+                        return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch)) };
+                    }
+                    else
+                    {
+                        return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch)), Message = "Incorrect Current Password" };
+                    }
                 }
                 else
                 {
-                    return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "Incorrect old Password" };
+                    // New Tokens
+                    var AuthHeader = GetAuthHeader(theNewCredentials.HttpRequestHeaders);
+                    var AuthFriendlyName = GetAuthFriendlyNameHeader(theNewCredentials.HttpRequestHeaders);
+
+                    if (AuthHeader != null && AuthFriendlyName != null && AuthHeader.Length == AuthFriendlyName.Length)
+                    {
+                        var NewTokens = new FileToken[AuthHeader.Length];
+
+                        for (int i = 0; i < AuthHeader.Length; i++)
+                        {
+                            NewTokens[i] = new FileToken { Value = AuthHeader[i], Expiry = string.Empty, FriendlyName = AuthFriendlyName[i] };
+                        }
+
+                        FileManager.AddTokens(UserSearch, NewTokens);
+                        FileManager.Write(File);
+                        return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch).ToArray()) };
+                    }
+                    else
+                    {
+                        return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch)), Message = "Not Modified" };
+                    }
                 }
             }
             else
             {
-                return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "User not found" };
+                return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(theCredentials.Username), false, new string[0]), Message = "User not found" };
             }
         }
 
         public IAuthResult Delete(IAuthCredentials theCredentials)
         {
-            AuthLocalFile File = ReadFile();
+            FileBody File = FileManager.Read();
 
             var UserSearch = File.Users.FirstOrDefault(User => User.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase));
 
             if (UserSearch != null)
             {
-                var Users = File.Users.ToList();
-                Users.Remove(UserSearch);
-                File.Users = Users.ToArray();
-                WriteFile(File);
-                return new AuthResult { Result = true, Identity = theCredentials.Username };
+                var AuthFriendlyName = GetAuthFriendlyNameHeader(theCredentials.HttpRequestHeaders);
+
+                if(AuthFriendlyName != null)
+                {
+                    if( ! FileManager.RemoveTokens(UserSearch, AuthFriendlyName))
+                    {
+                        return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch)), Message = "Token Not Found" };
+                    }
+                }
+                else
+                {
+                    FileManager.DeleteUser(File, UserSearch);
+                }
+
+                FileManager.Write(File);
+                return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch)) };
             }
             else
             {
-                return new AuthResult { Result = false, Identity = theCredentials.Username, Message = "User not found" };
+                return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(theCredentials.Username), false, new string[0]), Message = "User not found" };
             }
         }
 
-        public IReadOnlyCollection<string> Users()
+        public IReadOnlyCollection<IUser> Users()
         {
-            AuthLocalFile File = ReadFile();
-            return Array.AsReadOnly(File.Users.Select(User => c_Domains[0] + "\\" + User.Username).ToArray());
+            FileBody File = FileManager.Read();
+            return Array.AsReadOnly(File == null || File.Users == null ? new AUser[0] : File.Users.Select(User => new AUser(ConstructFullUsername(User), User.Enabled, ConstructTokenFriendlyNameList(User)) ).ToArray());
         }
 
         public IReadOnlyCollection<string> Domains
@@ -157,9 +212,9 @@ namespace MultiPlug.Auth.Local
             }
         }
 
-        private IAuthResult doLookUp(AuthLocalFile AuthFileRoot, string Token)
+        private IAuthResult doTokenLookUp(FileBody AuthFileRoot, string Token)
         {
-            User UserSearch = AuthFileRoot.Users.FirstOrDefault(User =>
+            FileUser UserSearch = AuthFileRoot.Users.FirstOrDefault(User =>
             {
                 if (User.Tokens != null)
                 {
@@ -173,7 +228,14 @@ namespace MultiPlug.Auth.Local
 
             if( UserSearch != null)
             {
-                return new AuthResult { Result = true, Identity = c_Domains[0] + "\\" + UserSearch.Username, Message = "OK" };
+                if (!UserSearch.Enabled)
+                {
+                    return new AuthResult { Result = false, Message = "User is disabled" };
+                }
+                else
+                {
+                    return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, ConstructTokenFriendlyNameList(UserSearch)), Message = "OK" };
+                }
             }
             else
             {
@@ -181,9 +243,24 @@ namespace MultiPlug.Auth.Local
             }
         }
 
-        private IAuthResult doLookUp(AuthLocalFile AuthFileRoot, string Username, string Password )
+        private string ConstructFullUsername(FileUser theUser)
         {
-            User UserSearch = AuthFileRoot.Users.FirstOrDefault(u => u.Username.Equals(Username, StringComparison.OrdinalIgnoreCase));
+            return c_Domains[0] + "\\" + theUser.Username;
+        }
+
+        private string ConstructFullUsername(string theUser)
+        {
+            return c_Domains[0] + "\\" + theUser;
+        }
+
+        private string[] ConstructTokenFriendlyNameList(FileUser theUser)
+        {
+            return theUser.Tokens == null ? new string[0] : theUser.Tokens.Select(t => t.FriendlyName).ToArray();
+        }
+
+        private IAuthResult doLookUp(FileBody AuthFileRoot, string Username, string Password )
+        {
+            FileUser UserSearch = AuthFileRoot.Users.FirstOrDefault(u => u.Username.Equals(Username, StringComparison.OrdinalIgnoreCase));
 
             if (UserSearch == null)
             {
@@ -197,9 +274,9 @@ namespace MultiPlug.Auth.Local
                 }
                 else
                 {
-                    if( Utils.Passwords.AuthenticatePassword( Password, UserSearch.Password ) )
+                    if( Utils.Passwords.AuthenticatePassword(Username + Password, UserSearch.Password ) )
                     {
-                        return new AuthResult { Result = true, Identity = c_Domains[0] + "\\" + UserSearch.Username, Message = "OK" };
+                        return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, UserSearch.Tokens.Select(t => t.FriendlyName).ToArray()), Message = "OK" };
                     }
                     else
                     {
@@ -209,121 +286,56 @@ namespace MultiPlug.Auth.Local
             }
         }
 
-
-        private AuthLocalFile ReadFile()
-        {
-            XmlSerializer Serializer = new XmlSerializer(typeof(AuthLocalFile));
-            using (Stream stream = new FileStream(m_AuthFile, FileMode.Open, FileAccess.Read, FileShare.Read))
-            {
-                return (AuthLocalFile)Serializer.Deserialize(stream);
-            }
-        }
-
-        private void  WriteFile(AuthLocalFile theFileObject)
-        {
-            XmlAttributeOverrides overrides = new XmlAttributeOverrides();
-
-            XmlAttributes attribs = new XmlAttributes();
-            attribs.XmlIgnore = true;
-            attribs.XmlElements.Add(new XmlElementAttribute("UsersLegacy"));
-            overrides.Add(typeof(AuthLocalFile), "UsersLegacy", attribs);
-
-            attribs = new XmlAttributes();
-            attribs.XmlIgnore = true;
-            attribs.XmlElements.Add(new XmlElementAttribute("UsernameLegacy"));
-            overrides.Add(typeof(User), "UsernameLegacy", attribs);
-
-            attribs = new XmlAttributes();
-            attribs.XmlIgnore = true;
-            attribs.XmlElements.Add(new XmlElementAttribute("PasswordLegacy"));
-            overrides.Add(typeof(User), "PasswordLegacy", attribs);
-
-            attribs = new XmlAttributes();
-            attribs.XmlIgnore = true;
-            attribs.XmlElements.Add(new XmlElementAttribute("EnabledLegacy"));
-            overrides.Add(typeof(User), "EnabledLegacy", attribs);
-
-            try
-            {
-                XmlSerializer Serializer = new XmlSerializer(typeof(AuthLocalFile), overrides);
-                using (Stream stream = new FileStream(m_AuthFile, FileMode.Create, FileAccess.Write, FileShare.None))
-                {
-                    Serializer.Serialize(stream, theFileObject);
-                }
-            }
-            catch { }
-        }
-
         public IAuthResult Authenticate( IAuthCredentials theCredentials)
         {
-            AuthLocalFile AuthFileRoot = null;
+            FileBody AuthFileRoot = null;
 
-            if ( ! File.Exists( m_AuthFile ) )
+            if (!FileManager.Exists())
             {
-                return new AuthResult { Result = false, Message = "System Error: Lookup file does not exist" };
+                return new AuthResult(false, null, "System Error: User file does not exist");
             }
 
-            try
-            {
-                AuthFileRoot = ReadFile();
-            }
-            catch ( InvalidOperationException ex )
-            {
-                return new AuthResult { Result = false, Message = "System Error: " + ex.Message };
-            }
-            catch ( FileNotFoundException ex )
-            {
-                return new AuthResult { Result = false, Message = "System Error: " + ex.Message };
-            }
-            catch ( Exception ex )
-            {
-                return new AuthResult { Result = false, Message = "System Error: " + ex.Message };
-            }
+            string[] AuthorizationHeader = null;
 
-            if( theCredentials.Scheme == Scheme.Form)
+            AuthFileRoot = FileManager.Read();
+
+            switch (theCredentials.Scheme)
             {
-                if(AuthFileRoot.Users == null)
-                {
-                    return new AuthResult { Result = false, Message = "System Error: Lookup file contains no users" };
-                }
+                case Scheme.Form:
+                    var UserSearch = AuthFileRoot.Users.FirstOrDefault(u => u.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase));
 
-                var UserSearch = AuthFileRoot.Users.FirstOrDefault(u => u.Username.Equals(theCredentials.Username, StringComparison.OrdinalIgnoreCase));
-
-                if (UserSearch == null)
-                {
-                    return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
-                }
-                else
-                {
-                    if (!UserSearch.Enabled)
+                    if (UserSearch == null)
                     {
-                        return new AuthResult { Result = false, Message = "User is disabled" };
+                        return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
                     }
                     else
                     {
-                        if( Utils.Passwords.AuthenticatePassword( theCredentials.Password, UserSearch.Password ) )
+                        if (!UserSearch.Enabled)
                         {
-                            return new AuthResult { Result = true, Identity = c_Domains[0] + "\\" + UserSearch.Username, Message = "OK" };
+                            return new AuthResult { Result = false, Message = "User is disabled" };
                         }
                         else
                         {
-                            return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
+                            if (Utils.Passwords.AuthenticatePassword(theCredentials.Username + theCredentials.Password, UserSearch.Password))
+                            {
+                                return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, UserSearch.Tokens.Select(t => t.FriendlyName).ToArray()), Message = "OK" };
+                            }
+                            else
+                            {
+                                return new AuthResult { Result = false, Message = "Username or Password is incorrect" };
+                            }
                         }
                     }
-                }
-            }
-            else if( theCredentials.Scheme == Scheme.Basic && theCredentials.HttpRequestHeaders != null)
-            {
-                KeyValuePair<string, IEnumerable<string>> AuthorizationHeader = theCredentials.HttpRequestHeaders.FirstOrDefault(Header => Header.Key == c_HttpRequestHeaders[0]);
 
-                if(AuthorizationHeader.Equals( new KeyValuePair<string, IEnumerable<string>>() ) )
-                {
-                    return new AuthResult { Result = false, Message = "Missing Authorization Header" };
-                }
+                case Scheme.Basic:
+                    AuthorizationHeader = GetAuthHeader(theCredentials.HttpRequestHeaders);
 
-                if (AuthorizationHeader.Value != null && AuthorizationHeader.Value.Count() > 0)
-                {
-                    string EncodedValue = AuthorizationHeader.Value.First();
+                    if (AuthorizationHeader == null)
+                    {
+                        return new AuthResult { Result = false, Message = "Missing Authorization Header" };
+                    }
+
+                    string EncodedValue = AuthorizationHeader.First();
                     string DecodedValue = Encoding.UTF8.GetString(Convert.FromBase64String(EncodedValue));
                     string DomainAndUsername = DecodedValue.Substring(0, DecodedValue.IndexOf(":"));
                     string Password = DecodedValue.Substring(DecodedValue.IndexOf(":") + 1);
@@ -343,7 +355,7 @@ namespace MultiPlug.Auth.Local
                         return new AuthResult { Result = false, Message = "Missing Domain" };
                     }
 
-                    if(Domain.Equals(c_Domains[0], StringComparison.OrdinalIgnoreCase))
+                    if (Domain.Equals(c_Domains[0], StringComparison.OrdinalIgnoreCase))
                     {
                         return doLookUp(AuthFileRoot, Username, Password);
                     }
@@ -351,36 +363,83 @@ namespace MultiPlug.Auth.Local
                     {
                         return new AuthResult { Result = false, Message = "Domain mismatch" };
                     }
-                }
-                else
-                {
-                    return new AuthResult { Result = false, Message = "Missing value in Authorization Header" };
-                }
-            }
-            else if (theCredentials.Scheme == Scheme.BearerToken && theCredentials.HttpRequestHeaders != null)
-            {
-                KeyValuePair<string, IEnumerable<string>> AuthorizationHeader = theCredentials.HttpRequestHeaders.FirstOrDefault(Header => Header.Key == c_HttpRequestHeaders[0]);
 
-                if (AuthorizationHeader.Equals(new KeyValuePair<string, IEnumerable<string>>()))
-                {
-                    return new AuthResult { Result = false, Message = "Missing Authorization Header" };
-                }
+                case Scheme.BearerToken:
+                    AuthorizationHeader = GetAuthHeader(theCredentials.HttpRequestHeaders);
 
-                if (AuthorizationHeader.Value != null && AuthorizationHeader.Value.Count() > 0)
-                {
-                    return doLookUp(AuthFileRoot, AuthorizationHeader.Value.First());
-                }
-                else
-                {
-                    return new AuthResult { Result = false, Message = "Missing value in Authorization Header" };
-                }
-            }
-            else
-            {
-                return new AuthResult { Result = false, Message = "Not a supported Scheme" };
+                    if (AuthorizationHeader == null)
+                    {
+                        return new AuthResult { Result = false, Message = "Missing Authorization Header" };
+                    }
+
+                    return doTokenLookUp(AuthFileRoot, AuthorizationHeader.First());
+
+                default:
+                    return new AuthResult { Result = false, Message = "Not a Supported Authentication Scheme" };
             }
         }
 
+        public IAuthResult Enable(string theUser, bool isEnabled)
+        {
+            FileBody File = FileManager.Read();
 
+            var UserSearch = File.Users.FirstOrDefault(User => User.Username.Equals(theUser, StringComparison.OrdinalIgnoreCase));
+
+            if (UserSearch != null)
+            {
+                if(UserSearch.Enabled != isEnabled)
+                {
+                    UserSearch.Enabled = isEnabled;
+                    FileManager.Write(File);
+                    return new AuthResult { Result = true, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, UserSearch.Tokens.Select(t => t.FriendlyName).ToArray()), Message = "OK" };
+                }
+                else
+                {
+                    return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(UserSearch), UserSearch.Enabled, UserSearch.Tokens.Select(t => t.FriendlyName).ToArray()), Message = "Not Modified" };
+            }
+            }
+            else
+            {
+                return new AuthResult { Result = false, User = new AUser(ConstructFullUsername(theUser), UserSearch.Enabled, UserSearch.Tokens.Select(t => t.FriendlyName).ToArray()), Message = "User not found" };
+            }
+        }
+
+        private string[] GetAuthHeader(IEnumerable<KeyValuePair<string, IEnumerable<string>>> theHttpRequestHeaders)
+        {
+            if(theHttpRequestHeaders == null)
+            {
+                return null;
+            }
+
+            var Search = theHttpRequestHeaders.FirstOrDefault(Header => Header.Key == c_HttpRequestHeaders[0]);
+
+            if(Search.Equals(default(KeyValuePair<string, IEnumerable<string>>)))
+            {
+                return null;
+            }
+            else
+            {
+                return Search.Value.ToArray();
+            }
+        }
+
+        private string[] GetAuthFriendlyNameHeader(IEnumerable<KeyValuePair<string, IEnumerable<string>>> theHttpRequestHeaders)
+        {
+            if (theHttpRequestHeaders == null)
+            {
+                return null;
+            }
+
+            var Search = theHttpRequestHeaders.FirstOrDefault(Header => Header.Key == "AuthorizationFriendlyName");
+
+            if (Search.Equals(default(KeyValuePair<string, IEnumerable<string>>)))
+            {
+                return null;
+            }
+            else
+            {
+                return Search.Value.ToArray();
+            }
+        }
     }
 }

@@ -1,11 +1,21 @@
-﻿using System;
-using MultiPlug.Base.Security;
+﻿using MultiPlug.Base.Security;
 
 namespace MultiPlug.Auth.Local.Models
 {
-    class AuthResult : IAuthResult
+    internal class AuthResult : IAuthResult
     {
-        public string Identity { get; set; } = string.Empty;
+        internal AuthResult()
+        {
+        }
+
+        internal AuthResult(bool theResult, IUser theUser, string theMessage)
+        {
+            Result = theResult;
+            Message = theMessage;
+            User = theUser;
+        }
+
+        public IUser User { get; set; } = null;
         public string Message { get; set; } = string.Empty;
         public bool Result { get; set; }
     }

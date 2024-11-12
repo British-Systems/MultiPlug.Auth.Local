@@ -2,7 +2,7 @@
 <package >
   <metadata>
     <id>MultiPlug.Auth.Local</id>
-    <version>1.0.4</version>
+    <version>1.0.5</version>
     <title>MultiPlug Authentication using a local file</title>
     <authors>British Systems</authors>
     <owners>British Systems</owners>
@@ -14,6 +14,7 @@
     <repository type="git" url="https://github.com/British-Systems/MultiPlug.Auth.Local" />
     <readme>docs\README.md</readme>
     <releaseNotes>
+1.0.5 https://github.com/British-Systems/MultiPlug.Auth.Local/issues/3
 1.0.4 https://github.com/British-Systems/MultiPlug.Auth.Local/issues/2
 1.0.3 Github issue #1
 1.0.2 upgrade for MultiPlug.Base 1.0.53
@@ -23,7 +24,7 @@
     <tags>MultiPlug Edge_Computing IOT IIOT</tags>
     <dependencies>
       <group targetFramework=".NETFramework4.7.2">
-        <dependency id="MultiPlug.Base" version="1.0.72" />
+        <dependency id="MultiPlug.Base" version="1.0.74" />
         <dependency id="MultiPlug.Core" version="2.2.81" />
       </group>
     </dependencies>
